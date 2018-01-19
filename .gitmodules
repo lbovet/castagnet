@@ -1,0 +1,3 @@
+[submodule "playlistparser"]
+	path = playlistparser
+	url = git@github.com:hugoatease/playlistparser.git
