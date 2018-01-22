@@ -1,7 +1,7 @@
-# coding=utf-8
-
-from flask import Flask
+from flask import Flask, jsonify
 import pychromecast
+import threading
+import json
 
 app = Flask(__name__)
 
@@ -33,3 +33,22 @@ def channel3():
 def listen(url, title):
     cast.media_controller.play_media(url, "audio/mpeg", title)
     return "Playing "+title
+
+@app.route("/castagnet/media/status")
+def status():
+    event = threading.Event()
+    try:
+        cast.media_controller.update_status(lambda x: event.set())
+        event.wait(1)
+        status = cast.media_controller.status
+        result = status.__dict__.copy()
+        result.pop('supported_media_commands')
+        result['supports_pause'] = status.supports_pause
+        result['supports_seek'] = status.supports_seek
+        result['supports_stream_volume'] = status.supports_stream_volume
+        result['supports_stream_mute'] = status.supports_stream_mute
+        result['supports_skip_forward'] = status.supports_skip_forward
+        result['supports_skip_backward'] = status.supports_skip_backward
+        return jsonify(result)
+    except Exception as e:
+        return jsonify(player_status="UNAVAILABLE", reason=str(e))
