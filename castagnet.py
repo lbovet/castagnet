@@ -33,7 +33,3 @@ def channel3():
 def listen(url, title):
     cast.media_controller.play_media(url, "audio/mpeg", title)
     return "Playing "+title
-
-#port=8088
-#print("Listening on port "+str(port))
-#app.run(host="0.0.0.0", port=port)
