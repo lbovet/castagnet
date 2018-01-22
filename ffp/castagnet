@@ -1,0 +1,9 @@
+#!/ffp/bin/python
+
+# Starts castagnet in bjoern WSGI server
+
+import bjoern
+from castagnet import app
+
+bjoern.run(app, "0.0.0.0", 8088)
+

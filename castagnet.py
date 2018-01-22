@@ -1,7 +1,8 @@
-from flask import Flask, jsonify, g, send_file
+from flask import Flask, Response, jsonify, g, send_file
 import pychromecast
 import threading
 import json
+from time import sleep
 
 app = Flask(__name__)
 
@@ -61,6 +62,23 @@ def listen(url, title):
     cast.media_controller.play_media(url, "audio/mpeg", title)
     return "Playing "+title
 
+@app.route("/castagnet/recorded/<int:id>")
+def recorded(id):
+    def generate():
+        f = open("/tmp/castagnet/"+str(id)+".mp3", "rb")
+        idle=0
+        while idle < 5: # Timeout
+            where = f.tell()
+            buffer = f.read(16384)
+            if len(buffer) > 0:
+                idle=0
+                yield buffer
+            else:
+                idle+=1
+                sleep(1)
+                f.seek(where)
+    return Response(generate(), mimetype='audio/mpeg')
+
 @app.route("/castagnet/media/status")
 def status():
     event = threading.Event()
@@ -79,15 +97,3 @@ def status():
         return jsonify(result)
     except Exception as e:
         return jsonify(player_status="UNAVAILABLE", reason=str(e))
-
-def after_this_request(f):
-    if not hasattr(g, 'after_request_callbacks'):
-        g.after_request_callbacks = []
-    g.after_request_callbacks.append(f)
-    return f
-
-@app.after_request
-def call_after_request_callbacks(response):
-    for callback in getattr(g, 'after_request_callbacks', ()):
-        callback(response)
-    return response
