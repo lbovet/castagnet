@@ -1,4 +1,4 @@
-from flask import Flask, Response, jsonify, g, send_file
+from flask import Flask, Response, request, jsonify
 import pychromecast
 import threading
 import json
@@ -56,7 +56,7 @@ def channel3():
 
 @app.route("/castagnet/control/ent", methods=['POST'])
 def special():
-    return listen("http://10.0.1.52/castagnet/recorded/1", "Recorded")
+    return listen("http://10.0.1.52:8088/castagnet/recorded/1", "Recorded")
 
 def listen(url, title):
     cast.media_controller.play_media(url, "audio/mpeg", title)
