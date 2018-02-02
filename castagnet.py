@@ -58,6 +58,18 @@ def channel3():
 def special():
     return listen("http://10.0.1.52:8088/castagnet/recorded/1", "Recorded")
 
+@app.route("/castagnet/control/up", methods=['POST'])
+def up():
+    level = min(1, cast.status.volume_level+0.1)
+    cast.volume_up()
+    return jsonify(volume_level=level)
+
+@app.route("/castagnet/control/down", methods=['POST'])
+def down():
+    level = max(0, cast.status.volume_level-0.1)
+    cast.volume_down()
+    return jsonify(volume_level=level)
+
 def listen(url, title):
     cast.media_controller.play_media(url, "audio/mpeg", title)
     return "Playing "+title
@@ -94,6 +106,9 @@ def status():
         result['supports_stream_mute'] = status.supports_stream_mute
         result['supports_skip_forward'] = status.supports_skip_forward
         result['supports_skip_backward'] = status.supports_skip_backward
+        result['volume_level'] = cast.status.volume_level
+        result['volume_muted'] = cast.status.volume_muted
+        result['app'] = cast.status.display_name
         return jsonify(result)
     except Exception as e:
         return jsonify(player_status="UNAVAILABLE", reason=str(e))
