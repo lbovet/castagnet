@@ -134,7 +134,7 @@ def icy_title(stream_url):
         return result
     try:
         r = requests.get(stream_url, headers={'Icy-MetaData': '1'}, stream=True, timeout=12.0)
-        if icy-name in r.headers:
+        if "icy-name" in r.headers:
             result["name"] = r.headers['icy-name']
         if "icy-metaint" in r.headers:
             r.raw.read(int(r.headers['icy-metaint']))
