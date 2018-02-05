@@ -3,7 +3,7 @@ from flask import Flask, Response, request, jsonify
 import pychromecast
 import threading
 import json
-from time import sleep
+import time
 import re
 import requests
 
@@ -90,18 +90,28 @@ def recorded(id):
                 yield buffer
             else:
                 idle+=1
-                sleep(1)
+                time.sleep(1)
                 f.seek(where)
     return Response(generate(), mimetype='audio/mpeg')
 
+stream_metadata = {}
+cache_timestamp = 0
+
 @app.route("/castagnet/media/status")
 def status():
+    global stream_metadata
+    global cache_timestamp
     event = threading.Event()
     try:
         cast.media_controller.update_status(lambda x: event.set())
-        stream_metadata = dict()
         if cast.media_controller.status and cast.media_controller.status.content_id:
-            stream_metadata = icy_title(cast.media_controller.status.content_id)
+            now = time.time()
+            print(now)
+            print(cache_timestamp)
+            if now > cache_timestamp + 4:
+                print(now - cache_timestamp)
+                cache_timestamp = now
+                stream_metadata = icy_title(cast.media_controller.status.content_id)
         event.wait(1)
         status = cast.media_controller.status
         result = status.__dict__.copy()
@@ -125,7 +135,6 @@ def status():
         result['app'] = cast.status.display_name
         return jsonify(result)
     except Exception as e:
-        raise e
         return jsonify(player_status="UNAVAILABLE", reason=str(e))
 
 def icy_title(stream_url):
