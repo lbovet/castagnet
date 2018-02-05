@@ -130,14 +130,14 @@ def status():
 
 def icy_title(stream_url):
     result = dict()
+    if stream_url.startswith("http://10.") or stream_url.startswith("http://192.168"):
+        return result
     try:
         r = requests.get(stream_url, headers={'Icy-MetaData': '1'}, stream=True, timeout=12.0)
-        name = r.headers['icy-name']
-        if name:
-            result["name"] = name
-        offset = r.headers['icy-metaint']
-        if offset:
-            r.raw.read(int(offset))
+        if icy-name in r.headers:
+            result["name"] = r.headers['icy-name']
+        if "icy-metaint" in r.headers:
+            r.raw.read(int(r.headers['icy-metaint']))
             meta = r.raw.read(255).rstrip(b'\0')
             m = re.search(br"StreamTitle='(.*?)( - (.*?))?';", bytes(meta))
             if m:
