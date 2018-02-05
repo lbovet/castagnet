@@ -1,8 +1,11 @@
+from __future__ import unicode_literals
 from flask import Flask, Response, request, jsonify
 import pychromecast
 import threading
 import json
 from time import sleep
+import re
+import requests
 
 app = Flask(__name__)
 
@@ -96,6 +99,9 @@ def status():
     event = threading.Event()
     try:
         cast.media_controller.update_status(lambda x: event.set())
+        stream_metadata = dict()
+        if cast.media_controller.status and cast.media_controller.status.content_id:
+            stream_metadata = icy_title(cast.media_controller.status.content_id)
         event.wait(1)
         status = cast.media_controller.status
         result = status.__dict__.copy()
@@ -108,7 +114,37 @@ def status():
         result['supports_skip_backward'] = status.supports_skip_backward
         result['volume_level'] = cast.status.volume_level
         result['volume_muted'] = cast.status.volume_muted
+        result['media_metadata'] = dict(stream_metadata.items() + result['media_metadata'].items())
+        originalName = result['media_metadata']['title']
+        if 'title' in stream_metadata :
+            result['media_metadata']['title'] = stream_metadata['title']
+        else:
+            del result['media_metadata']['title']
+        if 'name' not in result['media_metadata']:
+            result['media_metadata']['name'] = originalName
         result['app'] = cast.status.display_name
         return jsonify(result)
     except Exception as e:
+        raise e
         return jsonify(player_status="UNAVAILABLE", reason=str(e))
+
+def icy_title(stream_url):
+    result = dict()
+    try:
+        r = requests.get(stream_url, headers={'Icy-MetaData': '1'}, stream=True, timeout=12.0)
+        name = r.headers['icy-name']
+        if name:
+            result["name"] = name
+        offset = r.headers['icy-metaint']
+        if offset:
+            r.raw.read(int(offset))
+            meta = r.raw.read(255).rstrip(b'\0')
+            m = re.search(br"StreamTitle='(.*?)( - (.*?))?';", bytes(meta))
+            if m:
+                result["artist"] = m.group(1).decode("latin1", errors='replace')
+                subtitle = m.group(3).decode("latin1", errors='replace') if m.group(3) else None
+                if subtitle.strip() != result["artist"].strip():
+                    result["title"] = subtitle
+    except Exception as e:
+        raise e
+    return result
