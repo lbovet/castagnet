@@ -106,8 +106,6 @@ def status():
         cast.media_controller.update_status(lambda x: event.set())
         if cast.media_controller.status and cast.media_controller.status.content_id:
             now = time.time()
-            print(now)
-            print(cache_timestamp)
             if now > cache_timestamp + 4:
                 print(now - cache_timestamp)
                 cache_timestamp = now
@@ -132,6 +130,9 @@ def status():
             del result['media_metadata']['title']
         if 'name' not in result['media_metadata']:
             result['media_metadata']['name'] = originalName
+        if 'title' not in result['media_metadata'] and not cast.status.display_name == "Default Media Receiver":
+            result['media_metadata']['title'] = result['media_metadata']['name']
+            result['media_metadata']['name'] = cast.status.display_name
         result['app'] = cast.status.display_name
         return jsonify(result)
     except Exception as e:
@@ -155,5 +156,7 @@ def icy_title(stream_url):
                 if subtitle.strip() != result["artist"].strip():
                     result["title"] = subtitle
     except Exception as e:
-        raise e
+        pass
     return result
+
+print "Castagnet is there."
