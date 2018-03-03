@@ -1,6 +1,7 @@
 from __future__ import unicode_literals
 from flask import Flask, Response, request, jsonify
 import pychromecast
+from pychromecast.error import NotConnected
 import threading
 import json
 import time
@@ -9,7 +10,8 @@ import requests
 
 app = Flask(__name__)
 
-cast = pychromecast.Chromecast("10.0.1.22")
+ip = "10.0.1.22"
+cast = pychromecast.Chromecast(ip)
 
 @app.route("/castagnet/control/stop", methods=['POST'])
 def control():
@@ -73,8 +75,16 @@ def down():
     cast.volume_down()
     return jsonify(volume_level=level)
 
-def listen(url, title):
-    cast.media_controller.play_media(url, "audio/mpeg", title)
+def listen(url, title, tries=3):
+    global cast
+    try:
+        cast.media_controller.play_media(url, "audio/mpeg", title)
+    except NotConnected as e:
+        if tries > 0:
+            print("Not Connected: "+e.strerror)
+            cast = pychromecast.Chromecast(ip)
+            time.sleep(1)
+            listen(url, title, tries-1)
     return "Playing "+title
 
 @app.route("/castagnet/recorded/<int:id>")
@@ -107,7 +117,6 @@ def status():
         if cast.media_controller.status and cast.media_controller.status.content_id:
             now = time.time()
             if now > cache_timestamp + 4:
-                print(now - cache_timestamp)
                 cache_timestamp = now
                 stream_metadata = icy_title(cast.media_controller.status.content_id)
         event.wait(1)
