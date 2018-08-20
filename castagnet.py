@@ -77,13 +77,18 @@ def down():
 
 def listen(url, title, tries=3):
     global cast
+    err = cast.media_controller.status is not None and cast.media_controller.status.idle_reason == "ERROR"
     try:
         cast.media_controller.play_media(url, "audio/mpeg", title)
     except NotConnected as e:
+        err = True
+        print("Not Connected: "+e.strerror)
+    if err:
+        cast.disconnect(1, True)
         if tries > 0:
-            print("Not Connected: "+e.strerror)
             cast = pychromecast.Chromecast(ip)
             time.sleep(1)
+            status()
             listen(url, title, tries-1)
     return "Playing "+title
 
