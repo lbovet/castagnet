@@ -82,7 +82,7 @@ def listen(url, title, tries=3):
         cast.media_controller.play_media(url, "audio/mpeg", title)
     except NotConnected as e:
         err = True
-        print("Not Connected: "+e.strerror)
+        print("Not Connected")
     if err:
         cast.disconnect(1, True)
         if tries > 0:
