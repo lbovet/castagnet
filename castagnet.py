@@ -55,6 +55,10 @@ def seek(offset):
 def channel1():
     return listen("http://stream.srg-ssr.ch/m/la-1ere/mp3_128", "La 1ere")
 
+@app.route("/castagnet/control/2", methods=['POST'])
+def channel2():
+    return listen("http://grrif.ice.infomaniak.ch/grrif-64.aac", "GRRIF")
+
 @app.route("/castagnet/control/3", methods=['POST'])
 def channel3():
     return listen("http://stream.srg-ssr.ch/m/couleur3/mp3_128", "Couleur 3")
@@ -77,9 +81,13 @@ def down():
 
 def listen(url, title, tries=3):
     global cast
-    err = cast.media_controller.status is not None and cast.media_controller.status.idle_reason == "ERROR"
+    err = False #cast.media_controller.status is not None and cast.media_controller.status.idle_reason == "ERROR"
     try:
+        print("Playing!")
         cast.media_controller.play_media(url, "audio/mpeg", title)
+        time.sleep(0.3)
+        print(status())
+        cast.media_controller.play()
     except NotConnected as e:
         err = True
         print("Not Connected")
@@ -122,7 +130,7 @@ def status():
         if cast.media_controller.status and cast.media_controller.status.content_id:
             now = time.time()
             if now > cache_timestamp + 4:
-                cache_timestamp = now
+                cache_timestamp = now                
                 stream_metadata = icy_title(cast.media_controller.status.content_id)
         event.wait(1)
         status = cast.media_controller.status
@@ -157,7 +165,9 @@ def icy_title(stream_url):
     if stream_url.startswith("http://10.") or stream_url.startswith("http://192.168"):
         return result
     try:
-        r = requests.get(stream_url, headers={'Icy-MetaData': '1'}, stream=True, timeout=12.0)
+        print("Querying metadata")
+        r = requests.get(stream_url, headers={'Icy-MetaData': '1'}, stream=True, timeout=1.0)
+        print("Got metadata")
         if "icy-name" in r.headers:
             result["name"] = r.headers['icy-name']
         if "icy-metaint" in r.headers:
