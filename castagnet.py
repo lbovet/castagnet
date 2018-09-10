@@ -10,6 +10,10 @@ import requests
 
 app = Flask(__name__)
 
+if app.debug:
+    import logging
+    logging.getLogger("werkzeug").setLevel(logging.INFO)
+
 ip = "10.0.1.22"
 cast = pychromecast.Chromecast(ip)
 
@@ -83,10 +87,8 @@ def listen(url, title, tries=3):
     global cast
     err = False #cast.media_controller.status is not None and cast.media_controller.status.idle_reason == "ERROR"
     try:
-        print("Playing!")
         cast.media_controller.play_media(url, "audio/mpeg", title)
-        time.sleep(0.3)
-        print(status())
+        time.sleep(0.6)
         cast.media_controller.play()
     except NotConnected as e:
         err = True
