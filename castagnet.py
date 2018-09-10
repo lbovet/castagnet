@@ -7,6 +7,7 @@ import json
 import time
 import re
 import requests
+import wakeonlan
 
 app = Flask(__name__)
 
@@ -54,6 +55,11 @@ def seek(offset):
         return "Ok"
     except Exception as e:
         return jsonify(player_status="UNAVAILABLE", reason=str(e))
+
+@app.route("/castagnet/control/0", methods=['POST'])
+def channel0():
+    wakeonlan.send_magic_packet("00:23:54:23:3C:C2")
+    return "Ok"
 
 @app.route("/castagnet/control/1", methods=['POST'])
 def channel1():
