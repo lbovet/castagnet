@@ -8,6 +8,8 @@ import time
 import re
 import requests
 import wakeonlan
+import datetime
+from flask.json import JSONEncoder
 
 app = Flask(__name__)
 
@@ -17,6 +19,78 @@ if app.debug:
 
 ip = "10.0.1.22"
 cast = pychromecast.Chromecast(ip)
+
+stats = dict()
+window = datetime.timedelta(minutes=5)
+retain = datetime.timedelta(days=2)
+
+@app.after_request
+def after_request(response):
+    if not response.status.startswith("404") and request.path.startswith("/castagnet/control"):
+        counts = stats.setdefault(request.path, [])
+        count = counts[-1:]
+        now = datetime.datetime.now()
+        if len(count) == 0 or count[0][0] < now - window:
+            counts.append([now, 1])
+        else:
+            count[0][1]+=1   
+        limit = now - retain
+        for key, counts in stats.iteritems():
+            while len(counts) > 0 and counts[0][0] < limit:            
+                counts.pop(0)
+                print count[0][0]
+                print limit
+    return response
+
+@app.route("/castagnet/stats")
+def statistics():
+    if request_wants_html():
+        return '''
+        <head>
+            <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+        </head>
+        <body> 
+        <div id="stats"></div>
+        <script>
+            var xmlhttp = new XMLHttpRequest();
+            xmlhttp.onreadystatechange = function() {
+                if (this.readyState == 4 && this.status == 200) {
+                    stats = JSON.parse(this.responseText);
+                    data = [];
+                    for(var key in stats) {
+                        var trace = {
+                            x: [],
+                            y: [],
+                            type: 'scatter',
+                            mode: 'markers',
+                            marker: { size: 12 },
+                            name: key.split("/").pop()
+                        };                                   
+                        stats[key].forEach( (count)=> {
+                            trace.x.push(count[0]);
+                            trace.y.push(count[1]);
+                        });
+                        data.push(trace);             
+                    }
+                    Plotly.newPlot('stats', data,  {
+                        title: 'Requests',
+                        xaxis: {
+                            autorange: true,
+                            type: 'date'
+                        },
+                        yaxis: {
+                            type: 'log'
+                        }
+                    });   
+                }
+            };
+            xmlhttp.open("GET", "/castagnet/stats", true);
+            xmlhttp.send();     
+        </script>
+        </body>
+        '''
+    else:
+        return jsonify(stats)
 
 @app.route("/castagnet/control/stop", methods=['POST'])
 def control():
@@ -190,5 +264,27 @@ def icy_title(stream_url):
     except Exception as e:
         pass
     return result
+
+def request_wants_html():
+    best = request.accept_mimetypes \
+        .best_match(['text/html', 'application/json', ])
+    return best == 'text/html' and \
+        request.accept_mimetypes[best] > \
+        request.accept_mimetypes['application/json']
+
+
+class CustomJSONEncoder(JSONEncoder):
+    def default(self, obj):
+        try:
+            if isinstance(obj, datetime.datetime):
+                return obj.isoformat()
+            iterable = iter(obj)
+        except TypeError:
+            pass
+        else:
+            return list(iterable)
+        return JSONEncoder.default(self, obj)
+
+app.json_encoder = CustomJSONEncoder
 
 print "Castagnet is there."
