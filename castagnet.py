@@ -35,7 +35,7 @@ def after_request(response):
         else:
             count[0][1]+=1   
         limit = now - retain
-        for key, counts in stats.iteritems():
+        for _, counts in stats.iteritems():
             while len(counts) > 0 and counts[0][0] < limit:            
                 counts.pop(0)
                 print count[0][0]
@@ -170,7 +170,7 @@ def listen(url, title, tries=3):
         cast.media_controller.play_media(url, "audio/mpeg", title)
         time.sleep(0.6)
         cast.media_controller.play()
-    except NotConnected as e:
+    except NotConnected:
         err = True
         print("Not Connected")
     if err:
@@ -246,10 +246,8 @@ def icy_title(stream_url):
     result = dict()
     if stream_url.startswith("http://10.") or stream_url.startswith("http://192.168"):
         return result
-    try:
-        print("Querying metadata")
-        r = requests.get(stream_url, headers={'Icy-MetaData': '1'}, stream=True, timeout=1.0)
-        print("Got metadata")
+    try:        
+        r = requests.get(stream_url, headers={'Icy-MetaData': '1'}, stream=True, timeout=1.0)        
         if "icy-name" in r.headers:
             result["name"] = r.headers['icy-name']
         if "icy-metaint" in r.headers:
@@ -261,7 +259,7 @@ def icy_title(stream_url):
                 subtitle = m.group(3).decode("latin1", errors='replace') if m.group(3) else None
                 if subtitle.strip() != result["artist"].strip():
                     result["title"] = subtitle
-    except Exception as e:
+    except Exception:
         pass
     return result
 
@@ -274,7 +272,7 @@ def request_wants_html():
 
 
 class CustomJSONEncoder(JSONEncoder):
-    def default(self, obj):
+    def default(self, obj):  # pylint: disable=E0202
         try:
             if isinstance(obj, datetime.datetime):
                 return obj.isoformat()
