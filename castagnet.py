@@ -168,19 +168,27 @@ def listen(url, title, tries=3):
     err = False
     try:
         cast.media_controller.play_media(url, "audio/mpeg", title)
+        time.sleep(1)
+        event = threading.Event()
         cast.media_controller.update_status(
-            lambda x: cast.media_controller.play())
-    except NotConnected:
+            lambda x: event.set())
+        event.wait(1)
+        cast.media_controller.play()
+    except Exception:
         err = True
         print("Not Connected")
     if err:
         cast.disconnect(1, True)
         if tries > 0:
-            cast = pychromecast.Chromecast(ip)
-            time.sleep(1)
-            status()
+            reset()
             listen(url, title, tries-1)
     return "Playing "+title
+
+def reset():
+    global cast
+    cast = pychromecast.Chromecast(ip)
+    time.sleep(1)
+    status()
 
 @app.route("/castagnet/recorded/<int:id>")
 def recorded(id):
@@ -201,11 +209,13 @@ def recorded(id):
 
 stream_metadata = {}
 cache_timestamp = 0
+errors = 0
 
 @app.route("/castagnet/media/status")
 def status():
     global stream_metadata
     global cache_timestamp
+    global errors
     event = threading.Event()
     try:
         cast.media_controller.update_status(lambda x: event.set())
@@ -238,8 +248,13 @@ def status():
             result['media_metadata']['title'] = result['media_metadata']['name']
             result['media_metadata']['name'] = cast.status.display_name
         result['app'] = cast.status.display_name
+        errors = 0
         return jsonify(result)
     except Exception as e:
+        errors += 1
+        if errors > 10:
+            reset()
+            errors = 0
         return jsonify(player_status="UNAVAILABLE", reason=str(e))
 
 def icy_title(stream_url):
