@@ -23,6 +23,7 @@ cast = pychromecast.Chromecast(ip)
 stats = dict()
 window = datetime.timedelta(minutes=5)
 retain = datetime.timedelta(days=2)
+volume = 1.0
 
 @app.after_request
 def after_request(response):
@@ -165,6 +166,7 @@ def down():
 
 def listen(url, title, tries=3):
     global cast
+    global volume
     err = False
     try:
         cast.media_controller.play_media(url, "audio/mpeg", title)
@@ -173,12 +175,13 @@ def listen(url, title, tries=3):
         cast.media_controller.update_status(
             lambda x: event.set())
         event.wait(1)
+        if volume < 1.0:
+            cast.set_volume(volume)
         cast.media_controller.play()
     except Exception:
         err = True
         print("Not Connected")
     if err:
-        cast.disconnect(1, True)
         if tries > 0:
             reset()
             listen(url, title, tries-1)
@@ -186,6 +189,7 @@ def listen(url, title, tries=3):
 
 def reset():
     global cast
+    cast.disconnect(1, True)
     cast = pychromecast.Chromecast(ip)
     time.sleep(1)
     status()
@@ -216,6 +220,7 @@ def status():
     global stream_metadata
     global cache_timestamp
     global errors
+    global volume
     event = threading.Event()
     try:
         cast.media_controller.update_status(lambda x: event.set())
@@ -249,12 +254,14 @@ def status():
             result['media_metadata']['name'] = cast.status.display_name
         result['app'] = cast.status.display_name
         errors = 0
+        if cast.status.volume_level < 1.0:
+            volume = cast.status.volume_level
         return jsonify(result)
     except Exception as e:
         errors += 1
-        if errors > 10:
-            reset()
+        if errors > 50:
             errors = 0
+            reset()            
         return jsonify(player_status="UNAVAILABLE", reason=str(e))
 
 def icy_title(stream_url):
