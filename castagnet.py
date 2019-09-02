@@ -154,13 +154,13 @@ def special():
 
 @app.route("/castagnet/control/up", methods=['POST'])
 def up():
-    level = min(1, cast.status.volume_level+0.1)
+    level = min(1, cast.status.volume_level+0.05)
     cast.volume_up()
     return jsonify(volume_level=level)
 
 @app.route("/castagnet/control/down", methods=['POST'])
 def down():
-    level = max(0, cast.status.volume_level-0.1)
+    level = max(0, cast.status.volume_level*0.05)
     cast.volume_down()
     return jsonify(volume_level=level)
 
