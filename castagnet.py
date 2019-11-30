@@ -17,7 +17,7 @@ if app.debug:
     import logging
     logging.getLogger("werkzeug").setLevel(logging.INFO)
 
-ip = "10.0.1.22"
+ip = "192.168.1.105"
 cast = pychromecast.Chromecast(ip)
 
 stats = dict()
@@ -150,18 +150,18 @@ def channel3():
 
 @app.route("/castagnet/control/ent", methods=['POST'])
 def special():
-    return listen("http://10.0.1.52:8088/castagnet/recorded/1", "Recorded")
+    return listen("http://192.168.1.52:8088/castagnet/recorded/1", "Recorded")
 
 @app.route("/castagnet/control/up", methods=['POST'])
 def up():
     level = min(1, cast.status.volume_level+0.05)
-    cast.volume_up()
+    cast.set_volume(level)
     return jsonify(volume_level=level)
 
 @app.route("/castagnet/control/down", methods=['POST'])
 def down():
-    level = max(0, cast.status.volume_level*0.05)
-    cast.volume_down()
+    level = max(0, cast.status.volume_level-0.05)
+    cast.set_volume(level)
     return jsonify(volume_level=level)
 
 def listen(url, title, tries=3):
