@@ -9,6 +9,7 @@ import re
 import requests
 import wakeonlan
 import datetime
+import urllib
 from flask.json import JSONEncoder
 
 app = Flask(__name__)
@@ -17,7 +18,7 @@ if app.debug:
     import logging
     logging.getLogger("werkzeug").setLevel(logging.INFO)
 
-ip = "192.168.1.105"
+ip = "192.168.1.106"
 cast = pychromecast.Chromecast(ip)
 
 stats = dict()
@@ -214,6 +215,17 @@ def recorded(id):
 stream_metadata = {}
 cache_timestamp = 0
 errors = 0
+
+
+@app.route("/castagnet/media/play", methods=['GET', 'POST'])
+def playMedia():
+    global cast
+    url = request.args.get('url')
+    title = urllib.unquote(url.encode("utf-8")).decode("utf-8").split('/')[-1]
+    title = title.replace(".avi", "").replace(".mkv", "").replace(".", " ")
+    mime = request.args.get('mime') or "video/mp4"
+    cast.media_controller.play_media(url, mime, title)
+    return "Playing "+title
 
 @app.route("/castagnet/media/status")
 def status():
