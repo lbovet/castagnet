@@ -18,7 +18,7 @@ if app.debug:
     import logging
     logging.getLogger("werkzeug").setLevel(logging.INFO)
 
-ip = "192.168.1.106"
+ip = "192.168.1.107"
 cast = pychromecast.Chromecast(ip)
 
 stats = dict()
@@ -35,10 +35,10 @@ def after_request(response):
         if len(count) == 0 or count[0][0] < now - window:
             counts.append([now, 1])
         else:
-            count[0][1]+=1   
+            count[0][1]+=1
         limit = now - retain
         for _, counts in stats.iteritems():
-            while len(counts) > 0 and counts[0][0] < limit:            
+            while len(counts) > 0 and counts[0][0] < limit:
                 counts.pop(0)
                 print count[0][0]
                 print limit
@@ -51,7 +51,7 @@ def statistics():
         <head>
             <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
         </head>
-        <body> 
+        <body>
         <div id="stats"></div>
         <script>
             var xmlhttp = new XMLHttpRequest();
@@ -67,12 +67,12 @@ def statistics():
                             mode: 'markers',
                             marker: { size: 12 },
                             name: key.split("/").pop()
-                        };                                   
+                        };
                         stats[key].forEach( (count)=> {
                             trace.x.push(count[0]);
                             trace.y.push(count[1]);
                         });
-                        data.push(trace);             
+                        data.push(trace);
                     }
                     Plotly.newPlot('stats', data,  {
                         title: 'Requests',
@@ -83,11 +83,11 @@ def statistics():
                         yaxis: {
                             type: 'log'
                         }
-                    });   
+                    });
                 }
             };
             xmlhttp.open("GET", "/castagnet/stats", true);
-            xmlhttp.send();     
+            xmlhttp.send();
         </script>
         </body>
         '''
@@ -149,6 +149,30 @@ def channel2():
 def channel3():
     return listen("http://stream.srg-ssr.ch/m/couleur3/mp3_128", "Couleur 3")
 
+@app.route("/castagnet/control/4", methods=['POST'])
+def channel4():
+    return listen("http://167.114.64.181:8352/stream", "HD Radio - Classic Rock")
+
+@app.route("/castagnet/control/5", methods=['POST'])
+def channel5():
+    return listen("http://ice2.somafm.com/beatblender-64-aac", "Beat Blender")
+
+@app.route("/castagnet/control/6", methods=['POST'])
+def channel6():
+    return listen("http://178.33.251.97:8080/stream", "Art & Fashion")
+
+@app.route("/castagnet/control/7", methods=['POST'])
+def channel7():
+    return listen("http://lynx.prostreaming.net:8109/rockvaultradiouhd", "Rock Vault Radio")
+
+@app.route("/castagnet/control/8", methods=['POST'])
+def channel8():
+    return listen("http://hd.lagrosseradio.info:8000/lagrosseradio-metal-192.mp3", "La Grosse Radio")
+
+@app.route("/castagnet/control/9", methods=['POST'])
+def channel9():
+    return listen("http://stream.srg-ssr.ch/m/rsc_fr/aacp_96", "Swiss Classic")
+
 @app.route("/castagnet/control/ent", methods=['POST'])
 def special():
     return listen("http://192.168.1.52:8088/castagnet/recorded/1", "Recorded")
@@ -175,10 +199,12 @@ def listen(url, title, tries=3):
         event = threading.Event()
         cast.media_controller.update_status(
             lambda x: event.set())
-        event.wait(1)
+        event.wait(10)
         if volume < 1.0:
             cast.set_volume(volume)
         cast.media_controller.play()
+        if volume < 1.0:
+            cast.set_volume(volume)
     except Exception:
         err = True
         print("Not Connected")
@@ -239,7 +265,7 @@ def status():
         if cast.media_controller.status and cast.media_controller.status.content_id:
             now = time.time()
             if now > cache_timestamp + 4:
-                cache_timestamp = now                
+                cache_timestamp = now
                 stream_metadata = icy_title(cast.media_controller.status.content_id)
         event.wait(1)
         status = cast.media_controller.status
@@ -273,15 +299,15 @@ def status():
         errors += 1
         if errors > 50:
             errors = 0
-            reset()            
+            reset()
         return jsonify(player_status="UNAVAILABLE", reason=str(e))
 
 def icy_title(stream_url):
     result = dict()
     if stream_url.startswith("http://10.") or stream_url.startswith("http://192.168"):
         return result
-    try:        
-        r = requests.get(stream_url, headers={'Icy-MetaData': '1'}, stream=True, timeout=1.0)        
+    try:
+        r = requests.get(stream_url, headers={'Icy-MetaData': '1'}, stream=True, timeout=1.0)
         if "icy-name" in r.headers:
             result["name"] = r.headers['icy-name']
         if "icy-metaint" in r.headers:
