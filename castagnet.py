@@ -1,3 +1,4 @@
+# coding: latin-1
 from __future__ import unicode_literals
 from flask import Flask, Response, request, jsonify
 import pychromecast
@@ -18,7 +19,7 @@ if app.debug:
     import logging
     logging.getLogger("werkzeug").setLevel(logging.INFO)
 
-ip = "192.168.1.107"
+ip = "192.168.1.104"
 cast = pychromecast.Chromecast(ip)
 
 stats = dict()
@@ -290,6 +291,12 @@ def status():
         if 'title' not in result['media_metadata'] and not cast.status.display_name == "Default Media Receiver":
             result['media_metadata']['title'] = result['media_metadata']['name']
             result['media_metadata']['name'] = cast.status.display_name
+        if result['media_metadata']['name'].startswith("/RTS"):
+            if result['media_metadata']['name'][4] == "1":
+                result['media_metadata']['name'] = "La Première"
+            if result['media_metadata']['name'][4] == "3":
+                result['media_metadata']['name'] = "Couleur 3"
+
         result['app'] = cast.status.display_name
         errors = 0
         if cast.status.volume_level < 1.0:
