@@ -1,0 +1,4 @@
+Flask>=3.0,<4
+pychromecast==14.1.1
+requests>=2.31,<3
+waitress>=3.0,<4
