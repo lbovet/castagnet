@@ -1,49 +1,140 @@
-# coding: latin-1
-from __future__ import unicode_literals
-from flask import Flask, Response, request, jsonify
-import pychromecast
-from pychromecast.error import NotConnected
-import threading
-import json
-import time
-import re
-import requests
-import wakeonlan
 import datetime
-import urllib
-from flask.json import JSONEncoder
+import logging
+import os
+import re
+import threading
+import time
+import urllib.parse
+import uuid
+
+import pychromecast
+import requests
+import waitress
+import wakeonlan
+from flask import Flask, Response, jsonify, request
+from flask.json.provider import DefaultJSONProvider
 
 app = Flask(__name__)
 
 if app.debug:
-    import logging
     logging.getLogger("werkzeug").setLevel(logging.INFO)
 
-ip = "192.168.1.104"
-cast = pychromecast.Chromecast(ip)
+# Chromecast discovery. The default is the friendly name configured on the
+# device; set CASTAGNET_CHROMECAST to another name or to an IP address to
+# override it.
+CHROMECAST = os.environ.get("CASTAGNET_CHROMECAST", "Beamer").strip()
+DISCOVERY_TIMEOUT = float(os.environ.get("CASTAGNET_DISCOVERY_TIMEOUT", "8"))
+DISCOVERY_BACKOFF = float(os.environ.get("CASTAGNET_DISCOVERY_BACKOFF", "10"))
+IPV4_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
 
 stats = dict()
 window = datetime.timedelta(minutes=5)
 retain = datetime.timedelta(days=2)
 volume = 1.0
 
+# The Chromecast connection is established lazily, so the service starts even
+# when the Chromecast is off and can reconnect when it comes back.
+cast = None
+cast_browser = None
+cast_lock = threading.RLock()
+last_discovery_attempt = 0.0
+last_discovery_error = None
+
+
+def discover():
+    """Discover the configured Chromecast and return it with its browser."""
+    if IPV4_RE.match(CHROMECAST):
+        return (
+            pychromecast.get_chromecast_from_host(
+                (CHROMECAST, 8009, uuid.uuid4(), None, None)
+            ),
+            None,
+        )
+    casts, browser = pychromecast.get_listed_chromecasts(
+        friendly_names=[CHROMECAST],
+        discovery_timeout=DISCOVERY_TIMEOUT,
+    )
+    if not casts:
+        browser.stop_discovery()
+        raise RuntimeError("Chromecast %r not found" % CHROMECAST)
+    return casts[0], browser
+
+
+def get_cast():
+    """Return a connected Chromecast, discovering it if necessary."""
+    global cast, cast_browser, last_discovery_attempt, last_discovery_error
+    with cast_lock:
+        if cast is not None:
+            return cast
+        now = time.monotonic()
+        if (
+            last_discovery_error is not None
+            and now - last_discovery_attempt < DISCOVERY_BACKOFF
+        ):
+            raise last_discovery_error
+        last_discovery_attempt = now
+        try:
+            found, browser = discover()
+            try:
+                found.wait(timeout=10)
+            except Exception:
+                if browser is not None:
+                    try:
+                        browser.stop_discovery()
+                    except Exception:
+                        pass
+                try:
+                    found.disconnect(timeout=0)
+                except Exception:
+                    pass
+                raise
+        except Exception as exc:
+            last_discovery_error = exc
+            raise
+        last_discovery_error = None
+        cast = found
+        cast_browser = browser
+        return cast
+
+
+def reset():
+    """Drop the current connection and discover the Chromecast again."""
+    global cast, cast_browser, last_discovery_error
+    with cast_lock:
+        if cast is not None:
+            try:
+                cast.disconnect(timeout=2)
+            except Exception:
+                pass
+        if cast_browser is not None:
+            try:
+                cast_browser.stop_discovery()
+            except Exception:
+                pass
+        cast = None
+        cast_browser = None
+        last_discovery_error = None
+    return get_cast()
+
+
 @app.after_request
 def after_request(response):
-    if not response.status.startswith("404") and request.path.startswith("/castagnet/control"):
+    if not response.status.startswith("404") and request.path.startswith(
+        "/castagnet/control"
+    ):
         counts = stats.setdefault(request.path, [])
         count = counts[-1:]
         now = datetime.datetime.now()
         if len(count) == 0 or count[0][0] < now - window:
             counts.append([now, 1])
         else:
-            count[0][1]+=1
+            count[0][1] += 1
         limit = now - retain
-        for _, counts in stats.iteritems():
-            while len(counts) > 0 and counts[0][0] < limit:
-                counts.pop(0)
-                print count[0][0]
-                print limit
+        for _, bucket in stats.items():
+            while len(bucket) > 0 and bucket[0][0] < limit:
+                bucket.pop(0)
     return response
+
 
 @app.route("/castagnet/stats")
 def statistics():
@@ -95,149 +186,177 @@ def statistics():
     else:
         return jsonify(stats)
 
+
 @app.route("/castagnet/control/stop", methods=['POST'])
 def control():
-    cast.media_controller.stop()
+    get_cast().media_controller.stop()
     return "Ok"
+
 
 @app.route("/castagnet/control/pause", methods=['POST'])
 def pause():
-    cast.media_controller.pause()
+    get_cast().media_controller.pause()
     return "Ok"
+
 
 @app.route("/castagnet/control/play", methods=['POST'])
 def play():
-    cast.media_controller.play()
+    get_cast().media_controller.play()
     return "Ok"
+
 
 @app.route("/castagnet/control/back", methods=['POST'])
 def back():
     return seek(-30)
 
+
 @app.route("/castagnet/control/forward", methods=['POST'])
 def forward():
     return seek(+30)
 
+
 def seek(offset):
     event = threading.Event()
     try:
-        cast.media_controller.update_status(lambda x: event.set())
+        chromecast = get_cast()
+        chromecast.media_controller.update_status(
+            callback_function=lambda *_: event.set()
+        )
         event.wait(1)
-        position = cast.media_controller.status.current_time + offset
-        duration = cast.media_controller.status.duration
+        media_status = chromecast.media_controller.status
+        if media_status is None:
+            raise RuntimeError("no media status")
+        position = (media_status.current_time or 0) + offset
+        duration = media_status.duration
         if duration:
-            position = min(duration -5, position)
+            position = min(duration - 5, position)
         position = max(0, position)
-        cast.media_controller.seek(position)
+        chromecast.media_controller.seek(position)
         return "Ok"
     except Exception as e:
         return jsonify(player_status="UNAVAILABLE", reason=str(e))
+
 
 @app.route("/castagnet/control/0", methods=['POST'])
 def channel0():
     wakeonlan.send_magic_packet("00:23:54:23:3C:C2")
     return "Ok"
 
+
 @app.route("/castagnet/control/1", methods=['POST'])
 def channel1():
     return listen("http://stream.srg-ssr.ch/m/la-1ere/mp3_128", "La 1ere")
+
 
 @app.route("/castagnet/control/2", methods=['POST'])
 def channel2():
     return listen("http://grrif.ice.infomaniak.ch/grrif-64.aac", "GRRIF")
 
+
 @app.route("/castagnet/control/3", methods=['POST'])
 def channel3():
     return listen("http://stream.srg-ssr.ch/m/couleur3/mp3_128", "Couleur 3")
+
 
 @app.route("/castagnet/control/4", methods=['POST'])
 def channel4():
     return listen("http://167.114.64.181:8352/stream", "HD Radio - Classic Rock")
 
+
 @app.route("/castagnet/control/5", methods=['POST'])
 def channel5():
     return listen("http://ice2.somafm.com/beatblender-64-aac", "Beat Blender")
+
 
 @app.route("/castagnet/control/6", methods=['POST'])
 def channel6():
     return listen("http://178.33.251.97:8080/stream", "Art & Fashion")
 
+
 @app.route("/castagnet/control/7", methods=['POST'])
 def channel7():
     return listen("http://lynx.prostreaming.net:8109/rockvaultradiouhd", "Rock Vault Radio")
 
+
 @app.route("/castagnet/control/8", methods=['POST'])
 def channel8():
-    return listen("http://hd.lagrosseradio.info:8000/lagrosseradio-metal-192.mp3", "La Grosse Radio")
+    return listen(
+        "http://hd.lagrosseradio.info:8000/lagrosseradio-metal-192.mp3",
+        "La Grosse Radio",
+    )
+
 
 @app.route("/castagnet/control/9", methods=['POST'])
 def channel9():
     return listen("http://stream.srg-ssr.ch/m/rsc_fr/aacp_96", "Swiss Classic")
 
+
 @app.route("/castagnet/control/ent", methods=['POST'])
 def special():
     return listen("http://192.168.1.52:8088/castagnet/recorded/1", "Recorded")
 
+
 @app.route("/castagnet/control/up", methods=['POST'])
 def up():
-    level = min(1, cast.status.volume_level+0.05)
-    cast.set_volume(level)
+    chromecast = get_cast()
+    level = min(1, chromecast.status.volume_level + 0.05)
+    chromecast.set_volume(level)
     return jsonify(volume_level=level)
+
 
 @app.route("/castagnet/control/down", methods=['POST'])
 def down():
-    level = max(0, cast.status.volume_level-0.05)
-    cast.set_volume(level)
+    chromecast = get_cast()
+    level = max(0, chromecast.status.volume_level - 0.05)
+    chromecast.set_volume(level)
     return jsonify(volume_level=level)
 
+
 def listen(url, title, tries=3):
-    global cast
     global volume
-    err = False
     try:
-        cast.media_controller.play_media(url, "audio/mpeg", title)
+        chromecast = get_cast()
+        chromecast.media_controller.play_media(url, "audio/mpeg", title=title)
         time.sleep(1)
         event = threading.Event()
-        cast.media_controller.update_status(
-            lambda x: event.set())
+        chromecast.media_controller.update_status(
+            callback_function=lambda *_: event.set()
+        )
         event.wait(10)
         if volume < 1.0:
-            cast.set_volume(volume)
-        cast.media_controller.play()
+            chromecast.set_volume(volume)
+        chromecast.media_controller.play()
         if volume < 1.0:
-            cast.set_volume(volume)
+            chromecast.set_volume(volume)
     except Exception:
-        err = True
-        print("Not Connected")
-    if err:
+        app.logger.exception("Failed to play %s", title)
         if tries > 0:
-            reset()
-            listen(url, title, tries-1)
-    return "Playing "+title
+            try:
+                reset()
+            except Exception:
+                pass
+            return listen(url, title, tries - 1)
+    return "Playing " + title
 
-def reset():
-    global cast
-    cast.disconnect(1, True)
-    cast = pychromecast.Chromecast(ip)
-    time.sleep(1)
-    status()
 
 @app.route("/castagnet/recorded/<int:id>")
 def recorded(id):
     def generate():
-        f = open("/tmp/castagnet/"+str(id)+".mp3", "rb")
-        idle=0
-        while idle < 5: # Timeout
+        f = open("/tmp/castagnet/" + str(id) + ".mp3", "rb")
+        idle = 0
+        while idle < 5:  # Timeout
             where = f.tell()
             buffer = f.read(16384)
             if len(buffer) > 0:
-                idle=0
+                idle = 0
                 yield buffer
             else:
-                idle+=1
+                idle += 1
                 time.sleep(1)
                 f.seek(where)
+
     return Response(generate(), mimetype='audio/mpeg')
+
 
 stream_metadata = {}
 cache_timestamp = 0
@@ -246,13 +365,15 @@ errors = 0
 
 @app.route("/castagnet/media/play", methods=['GET', 'POST'])
 def playMedia():
-    global cast
     url = request.args.get('url')
-    title = urllib.unquote(url.encode("utf-8")).decode("utf-8").split('/')[-1]
+    if not url:
+        return jsonify(player_status="UNAVAILABLE", reason="missing url"), 400
+    title = urllib.parse.unquote(url).split('/')[-1]
     title = title.replace(".avi", "").replace(".mkv", "").replace(".", " ")
     mime = request.args.get('mime') or "video/mp4"
-    cast.media_controller.play_media(url, mime, title)
-    return "Playing "+title
+    get_cast().media_controller.play_media(url, mime, title=title)
+    return "Playing " + title
+
 
 @app.route("/castagnet/media/status")
 def status():
@@ -262,73 +383,101 @@ def status():
     global volume
     event = threading.Event()
     try:
-        cast.media_controller.update_status(lambda x: event.set())
-        if cast.media_controller.status and cast.media_controller.status.content_id:
+        chromecast = get_cast()
+        if chromecast.status is None:
+            raise RuntimeError("no cast status")
+        chromecast.media_controller.update_status(
+            callback_function=lambda *_: event.set()
+        )
+        media_status = chromecast.media_controller.status
+        if media_status and media_status.content_id:
             now = time.time()
             if now > cache_timestamp + 4:
                 cache_timestamp = now
-                stream_metadata = icy_title(cast.media_controller.status.content_id)
+                stream_metadata = icy_title(media_status.content_id)
         event.wait(1)
-        status = cast.media_controller.status
-        result = status.__dict__.copy()
-        result.pop('supported_media_commands')
-        result['supports_pause'] = status.supports_pause
-        result['supports_seek'] = status.supports_seek
-        result['supports_stream_volume'] = status.supports_stream_volume
-        result['supports_stream_mute'] = status.supports_stream_mute
-        result['supports_skip_forward'] = status.supports_skip_forward
-        result['supports_skip_backward'] = status.supports_skip_backward
-        result['volume_level'] = cast.status.volume_level
-        result['volume_muted'] = cast.status.volume_muted
-        result['media_metadata'] = dict(stream_metadata.items() + result['media_metadata'].items())
-        originalName = result['media_metadata']['title']
-        if 'title' in stream_metadata :
-            result['media_metadata']['title'] = stream_metadata['title']
+        media_status = chromecast.media_controller.status
+        if media_status is None:
+            raise RuntimeError("no media status")
+        result = media_status.__dict__.copy()
+        result.pop('supported_media_commands', None)
+        result['supports_pause'] = media_status.supports_pause
+        result['supports_seek'] = media_status.supports_seek
+        result['supports_stream_volume'] = media_status.supports_stream_volume
+        result['supports_stream_mute'] = media_status.supports_stream_mute
+        result['supports_skip_forward'] = media_status.supports_skip_forward
+        result['supports_skip_backward'] = media_status.supports_skip_backward
+        result['volume_level'] = chromecast.status.volume_level
+        result['volume_muted'] = chromecast.status.volume_muted
+        metadata = dict(stream_metadata)
+        metadata.update(media_status.media_metadata or {})
+        original_name = metadata.get('title')
+        if 'title' in stream_metadata:
+            metadata['title'] = stream_metadata['title']
         else:
-            del result['media_metadata']['title']
-        if 'name' not in result['media_metadata']:
-            result['media_metadata']['name'] = originalName
-        if 'title' not in result['media_metadata'] and not cast.status.display_name == "Default Media Receiver":
-            result['media_metadata']['title'] = result['media_metadata']['name']
-            result['media_metadata']['name'] = cast.status.display_name
-        if result['media_metadata']['name'].startswith("/RTS"):
-            if result['media_metadata']['name'][4] == "1":
-                result['media_metadata']['name'] = "La PremiËre"
-            if result['media_metadata']['name'][4] == "3":
-                result['media_metadata']['name'] = "Couleur 3"
-
-        result['app'] = cast.status.display_name
+            metadata.pop('title', None)
+        if 'name' not in metadata and original_name is not None:
+            metadata['name'] = original_name
+        if (
+            'title' not in metadata
+            and metadata.get('name') is not None
+            and chromecast.status.display_name != "Default Media Receiver"
+        ):
+            metadata['title'] = metadata.get('name')
+            metadata['name'] = chromecast.status.display_name
+        name = metadata.get('name') or ""
+        if name.startswith("/RTS") and len(name) > 4:
+            if name[4] == "1":
+                metadata['name'] = "La Premi√®re"
+            if name[4] == "3":
+                metadata['name'] = "Couleur 3"
+        result['media_metadata'] = metadata
+        result['app'] = chromecast.status.display_name
         errors = 0
-        if cast.status.volume_level < 1.0:
-            volume = cast.status.volume_level
+        if chromecast.status.volume_level < 1.0:
+            volume = chromecast.status.volume_level
         return jsonify(result)
     except Exception as e:
         errors += 1
         if errors > 50:
             errors = 0
-            reset()
+            try:
+                reset()
+            except Exception:
+                pass
         return jsonify(player_status="UNAVAILABLE", reason=str(e))
+
 
 def icy_title(stream_url):
     result = dict()
     if stream_url.startswith("http://10.") or stream_url.startswith("http://192.168"):
         return result
     try:
-        r = requests.get(stream_url, headers={'Icy-MetaData': '1'}, stream=True, timeout=1.0)
-        if "icy-name" in r.headers:
-            result["name"] = r.headers['icy-name']
-        if "icy-metaint" in r.headers:
-            r.raw.read(int(r.headers['icy-metaint']))
-            meta = r.raw.read(255).rstrip(b'\0')
-            m = re.search(br"StreamTitle='(.*?)( - (.*?))?';", bytes(meta))
-            if m:
-                result["artist"] = m.group(1).decode("latin1", errors='replace')
-                subtitle = m.group(3).decode("latin1", errors='replace') if m.group(3) else None
-                if subtitle.strip() != result["artist"].strip():
-                    result["title"] = subtitle
+        r = requests.get(
+            stream_url, headers={'Icy-MetaData': '1'}, stream=True, timeout=1.0
+        )
+        try:
+            if "icy-name" in r.headers:
+                result["name"] = r.headers['icy-name']
+            if "icy-metaint" in r.headers:
+                r.raw.read(int(r.headers['icy-metaint']))
+                meta = r.raw.read(255).rstrip(b'\0')
+                m = re.search(br"StreamTitle='(.*?)( - (.*?))?';", bytes(meta))
+                if m:
+                    result["artist"] = m.group(1).decode("latin1", errors='replace')
+                    subtitle = (
+                        m.group(3).decode("latin1", errors='replace')
+                        if m.group(3)
+                        else None
+                    )
+                    if subtitle.strip() != result["artist"].strip():
+                        result["title"] = subtitle
+        finally:
+            r.close()
     except Exception:
         pass
     return result
+
 
 def request_wants_html():
     best = request.accept_mimetypes \
@@ -338,18 +487,25 @@ def request_wants_html():
         request.accept_mimetypes['application/json']
 
 
-class CustomJSONEncoder(JSONEncoder):
-    def default(self, obj):  # pylint: disable=E0202
+class CustomJSONProvider(DefaultJSONProvider):
+    def default(self, obj):
+        if isinstance(obj, datetime.datetime):
+            return obj.isoformat()
         try:
-            if isinstance(obj, datetime.datetime):
-                return obj.isoformat()
-            iterable = iter(obj)
+            return list(iter(obj))
         except TypeError:
-            pass
-        else:
-            return list(iterable)
-        return JSONEncoder.default(self, obj)
+            return super().default(obj)
 
-app.json_encoder = CustomJSONEncoder
 
-print "Castagnet is there."
+app.json = CustomJSONProvider(app)
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    app.logger.info("Castagnet is there.")
+    waitress.serve(
+        app,
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", "8088")),
+        threads=8,
+    )
