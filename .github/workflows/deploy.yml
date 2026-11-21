@@ -114,5 +114,19 @@ jobs:
             sleep 1
           done
           systemctl is-active castagnet
+          healthy=0
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 5 http://127.0.0.1:8088/castagnet/stats >/dev/null 2>&1; then
+              healthy=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$healthy" -ne 1 ]; then
+            echo "castagnet did not become reachable on 127.0.0.1:8088" >&2
+            systemctl status castagnet --no-pager || true
+            journalctl -u castagnet -n 50 --no-pager || true
+            exit 1
+          fi
           curl -fsS --max-time 30 http://127.0.0.1:8088/castagnet/media/status >/dev/null
           EOF
