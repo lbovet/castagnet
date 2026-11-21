@@ -43,6 +43,11 @@ The systemd unit, the `/srv/castagnet` directory and its virtualenv are owned by
 the [kitch repository](https://github.com/lbovet/kitch). Pull requests only run
 the compile/import check; they never touch the Pi.
 
+On the LAN the service is reachable at `http://raspberrypi.local:8088` (or the
+Pi's current IP). Point `irpost` and `switch.sh` there instead of the legacy NAS
+address. The `ent` channel still points at the NAS for recorded streams; that is
+unchanged.
+
 ## Local development
 
 ```bash
