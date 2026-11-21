@@ -77,10 +77,18 @@ jobs:
       - name: Deploy to kitch
         run: |
           set -eu
-          ssh kitch 'test -d /srv/castagnet && systemctl cat castagnet.service >/dev/null 2>&1' || {
-            echo "kitch is not prepared: merge lbovet/kitch#3 first" >&2
+          ready=0
+          for i in $(seq 1 30); do
+            if ssh kitch 'test -d /srv/castagnet && systemctl cat castagnet.service >/dev/null 2>&1'; then
+              ready=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "kitch is not prepared: merge lbovet/kitch#4 first" >&2
             exit 1
-          }
+          fi
           rsync -az --delete \
             --exclude '.git' \
             --exclude '.github' \
@@ -94,7 +102,7 @@ jobs:
           set -eu
           cd /srv/castagnet
           if ! systemctl cat castagnet.service >/dev/null 2>&1; then
-            echo "castagnet.service is not installed on kitch; merge lbovet/kitch#3 first" >&2
+            echo "castagnet.service is not installed on kitch; merge lbovet/kitch#4 first" >&2
             exit 1
           fi
           python3 -m venv .venv
